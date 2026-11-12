@@ -192,6 +192,7 @@ def send_message(text):
                       data={"chat_id": CHAT_ID, "text": text, "reply_markup": json.dumps(kb)})
     if not r.ok:
         print("Ошибка sendMessage:", r.text)
+    return r.ok
 
 
 def send_photo(png):
@@ -199,6 +200,7 @@ def send_photo(png):
                       data={"chat_id": CHAT_ID}, files={"photo": ("schedule.png", png)})
     if not r.ok:
         print("Ошибка sendPhoto:", r.text)
+    return r.ok
 
 
 def check_commands(state):
@@ -256,6 +258,7 @@ async def main():
     today = datetime.now(TZ).date()
     updated = fact.get("update", "")
     sent = set()
+    failed = False
 
     for day, slots in days:
         key = str(day)
@@ -263,11 +266,14 @@ async def main():
         if state.get(key) == h:
             continue
         kind = "new" if key not in state else "changed"
-        state[key] = h
         label = "сьогодні" if day == today else "завтра"
-        send_message(build_text(day, label, slots, kind))
-        send_photo(render(day, label, slots, updated))
-        sent.add(key)
+        ok = send_message(build_text(day, label, slots, kind))
+        if ok:
+            send_photo(render(day, label, slots, updated))
+            state[key] = h  # запоминаем, только если сообщение дошло
+            sent.add(key)
+        else:
+            failed = True
 
     if wanted:
         for day, slots in days:
@@ -281,6 +287,9 @@ async def main():
 
     save_state(state)
     print("Готово. Дней в графике:", len(days), "| команда:", wanted)
+    if failed:
+        print("Не удалось отправить сообщение в Telegram: проверьте BOT_TOKEN и CHAT_ID.")
+        sys.exit(1)
 
 
 asyncio.run(main())
