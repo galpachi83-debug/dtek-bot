@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Прислать график принудительно"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -30,6 +35,7 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
           ADDRESS: ${{ secrets.ADDRESS }}
           GROUP: "GPV4.2"
+          FORCE: ${{ inputs.force }}
       - name: Save state
         run: |
           git config user.name "dtek-bot"
