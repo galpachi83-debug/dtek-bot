@@ -23,6 +23,8 @@ BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 GROUP = os.environ.get("GROUP") or "GPV4.2"
 ADDRESS = os.environ.get("ADDRESS") or ""
+# FORCE=true: запуск по кнопке «Оновити» — прислать график, даже если он не менялся
+FORCE = os.environ.get("FORCE", "").lower() == "true"
 
 URL = "https://www.dtek-dnem.com.ua/ua/shutdowns"
 STATE_FILE = "state.json"
@@ -209,6 +211,8 @@ def check_commands(state):
     if "offset" in state:
         params["offset"] = state["offset"]
     r = requests.get(f"{API}/getUpdates", params=params, timeout=30)
+    if r.status_code == 409:  # включён webhook (кнопка «Оновити»): команды приходят через него
+        return False
     if not r.ok:
         print("Ошибка getUpdates:", r.text)
         return False
@@ -254,7 +258,7 @@ async def main():
         sys.exit(1)
 
     state = load_state()
-    wanted = check_commands(state)
+    wanted = check_commands(state) or FORCE
     today = datetime.now(TZ).date()
     updated = fact.get("update", "")
     sent = set()
