@@ -94,6 +94,40 @@ def hours_text(x):
     return f"{n} {w}"
 
 
+# ---------- список отключений для напоминаний ----------
+def build_outages(days):
+    """Непрерывные отключения [(начало, конец)], с учётом перехода через полночь."""
+    outages = []
+    for day, slots in days:
+        base = datetime.combine(day, datetime.min.time(), TZ)
+        i = 0
+        while i < 48:
+            if slots[i]:
+                j = i
+                while j < 48 and slots[j]:
+                    j += 1
+                start = base + timedelta(minutes=30 * i)
+                end = base + timedelta(minutes=30 * j)
+                if outages and outages[-1][1] == start:  # продолжение с прошлого дня
+                    outages[-1] = (outages[-1][0], end)
+                else:
+                    outages.append((start, end))
+                i = j
+            else:
+                i += 1
+    return outages
+
+
+def save_outages(days):
+    data = {
+        "group": GROUP,
+        "outages": [{"start": s.isoformat(), "end": e.isoformat()}
+                    for s, e in build_outages(days)],
+    }
+    with open("schedule.json", "w") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+
+
 # ---------- текст ----------
 def build_text(day, label, slots, kind):
     n, total = stats(slots)
@@ -257,6 +291,7 @@ async def main():
         print("Ключи fact:", list(fact)[:20] if isinstance(fact, dict) else type(fact))
         sys.exit(1)
 
+    save_outages(days)  # schedule.json: по нему Worker шлёт напоминания за 30 минут
     state = load_state()
     wanted = check_commands(state) or FORCE
     today = datetime.now(TZ).date()
