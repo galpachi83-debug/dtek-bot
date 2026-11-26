@@ -62,24 +62,39 @@ def to_slots(hours):
     return slots
 
 
+def find_group(groups):
+    """Ключ вашей очереди в данных дня (ищем и по номеру, на случай смены названия)."""
+    if GROUP in groups:
+        return GROUP
+    num = GROUP.replace("GPV", "").strip()
+    for k in groups:
+        if str(k).replace("GPV", "").strip() == num:
+            return k
+    return None
+
+
 def get_days(fact):
     """[(дата, слоты)] на сегодня и завтра для вашей очереди."""
+    global DIAG
     today = datetime.now(TZ).date()
     result = []
+    notes = []
     for ts, groups in fact["data"].items():
         day = datetime.fromtimestamp(int(ts), TZ).date()
         if day not in (today, today + timedelta(days=1)):
             continue
-        if GROUP not in groups:
-            print(f"Очереди {GROUP} нет. Доступные:", list(groups)[:30])
+        key = find_group(groups)
+        if key is None:
+            sample = next(iter(groups.values()), None) if groups else None
+            notes.append(f"{day}: очереди {GROUP} нет; есть {list(groups)[:30]}; "
+                         f"пример данных: {str(sample)[:200]}")
             continue
-        result.append((day, to_slots(groups[GROUP])))
+        result.append((day, to_slots(groups[key])))
     if not result:
-        global DIAG
         dates = [datetime.fromtimestamp(int(t), TZ).date().isoformat() for t in fact["data"]]
         DIAG = (f"ДИАГНОСТИКА: сегодня {today} | даты в данных сайта: {dates} | "
                 f"update: {fact.get('update')} | today: {fact.get('today')} | "
-                f"ключи fact: {list(fact)[:15]}")
+                f"ключи fact: {list(fact)[:15]} | " + " || ".join(notes))
         print(DIAG)
     return sorted(result, key=lambda x: x[0])
 
