@@ -25,6 +25,7 @@ GROUP = os.environ.get("GROUP") or "GPV4.2"
 ADDRESS = os.environ.get("ADDRESS") or ""
 # FORCE=true: запуск по кнопке «Оновити» — прислать график, даже если он не менялся
 FORCE = os.environ.get("FORCE", "").lower() == "true"
+DIAG = ""  # заполняется, если график на сегодня/завтра не найден
 
 URL = "https://www.dtek-dnem.com.ua/ua/shutdowns"
 STATE_FILE = "state.json"
@@ -73,6 +74,13 @@ def get_days(fact):
             print(f"Очереди {GROUP} нет. Доступные:", list(groups)[:30])
             continue
         result.append((day, to_slots(groups[GROUP])))
+    if not result:
+        global DIAG
+        dates = [datetime.fromtimestamp(int(t), TZ).date().isoformat() for t in fact["data"]]
+        DIAG = (f"ДИАГНОСТИКА: сегодня {today} | даты в данных сайта: {dates} | "
+                f"update: {fact.get('update')} | today: {fact.get('today')} | "
+                f"ключи fact: {list(fact)[:15]}")
+        print(DIAG)
     return sorted(result, key=lambda x: x[0])
 
 
@@ -322,7 +330,7 @@ async def main():
             send_message(build_text(day, label, slots, "request"))
             send_photo(render(day, label, slots, updated))
         if not days:
-            send_message("Графіка на сьогодні/завтра для вашої черги поки немає.")
+            send_message("Графіка на сьогодні/завтра для вашої черги поки немає.\n\n" + DIAG)
 
     save_state(state)
     print("Готово. Дней в графике:", len(days), "| команда:", wanted)
