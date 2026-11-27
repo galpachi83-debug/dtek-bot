@@ -151,6 +151,34 @@ def save_outages(days):
         json.dump(data, f, ensure_ascii=False, indent=1)
 
 
+# ---------- сводка по всем очередям (чтобы найти свою) ----------
+def _gkey(name):
+    try:
+        return tuple(int(x) for x in str(name).replace("GPV", "").split("."))
+    except ValueError:
+        return (999, str(name))
+
+
+def groups_overview(fact):
+    """Текст: у каждой очереди из данных сайта — когда нет света сегодня."""
+    today = datetime.now(TZ).date()
+    lines = []
+    for ts, groups in fact["data"].items():
+        day = datetime.fromtimestamp(int(ts), TZ).date()
+        if day != today:
+            continue
+        for name in sorted(groups, key=_gkey):
+            outs = build_outages([(day, to_slots(groups[name]))])
+            parts = []
+            for s, e in outs:
+                et = e.strftime("%H:%M")
+                if et == "00:00" and e.date() != day:
+                    et = "24:00"
+                parts.append(f"{s.strftime('%H:%M')}–{et}")
+            lines.append(f"{str(name).replace('GPV', '')}: " + (", ".join(parts) or "без відключень"))
+    return "\n".join(lines)
+
+
 # ---------- текст ----------
 def build_text(day, label, slots, kind):
     n, total = stats(slots)
@@ -345,7 +373,10 @@ async def main():
             send_message(build_text(day, label, slots, "request"))
             send_photo(render(day, label, slots, updated))
         if not days:
-            send_message("Графіка на сьогодні/завтра для вашої черги поки немає.\n\n" + DIAG)
+            overview = groups_overview(fact)
+            send_message(f"Черги {GROUP.replace('GPV', '')} у даних сайту немає.\n\n"
+                         "Коли немає світла сьогодні, за чергами:\n" + overview +
+                         "\n\nЗнайдіть рядок, що збігається з графіком вашої адреси на сайті ДТЕК.")
 
     save_state(state)
     print("Готово. Дней в графике:", len(days), "| команда:", wanted)
