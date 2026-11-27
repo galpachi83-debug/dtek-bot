@@ -25,11 +25,51 @@ CHAT_ID = os.environ["CHAT_ID"]
 # Можно задать в dtek.yml: GROUP: "GPV4.2,GPV8.1"
 GROUPS = [g.strip() for g in (os.environ.get("GROUP") or "GPV4.2,GPV8.1").split(",") if g.strip()]
 GROUP = GROUPS[0]
+# Подпись очереди в сообщении (только текст). Если пусто — пишется найденная очередь.
+LABEL = os.environ.get("LABEL") or ""
 ACTIVE = GROUP  # очередь, по которой реально найден график (заполняется в get_days)
 ADDRESS = os.environ.get("ADDRESS") or ""
 # FORCE=true: запуск по кнопке «Оновити» — прислать график, даже если он не менялся
 FORCE = os.environ.get("FORCE", "").lower() == "true"
 DIAG = ""  # заполняется, если график на сегодня/завтра не найден
+
+# Адрес (необязательно). Если заданы, очередь определяется по адресу через сайт ДТЕК;
+# если не получилось, берутся запасные очереди из GROUP.
+CITY = os.environ.get("CITY") or ""       # как на сайте, например: м. Кривий Ріг
+STREET = os.environ.get("STREET") or ""   # как на сайте, например: просп. Університетський
+HOUSE = (os.environ.get("HOUSE") or "").strip()
+ADDR_RESP = None   # ответ сайта getHomeNum по вашей улице
+ADDR_GROUP = None  # очередь вашего дома, определённая по адресу
+ADDR_NOTE = ""     # пояснение, если по адресу определить не удалось
+
+# Тот же запрос, который сайт делает сам, когда вы выбираете улицу
+JS_LOOKUP = """
+async ({city, street, upd}) => {
+  const meta = document.querySelector('meta[name="csrf-token"]');
+  const token = meta ? meta.content : "";
+  const body = new URLSearchParams();
+  body.append("method", "getHomeNum");
+  body.append("data[0][name]", "city");
+  body.append("data[0][value]", city);
+  body.append("data[1][name]", "street");
+  body.append("data[1][value]", street);
+  body.append("data[2][name]", "updateFact");
+  body.append("data[2][value]", upd);
+  const r = await fetch("/ua/ajax", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      "X-Requested-With": "XMLHttpRequest",
+      "X-CSRF-Token": token,
+    },
+    body: body.toString(),
+  });
+  const text = await r.text();
+  try { return {status: r.status, json: JSON.parse(text)}; }
+  catch (e) { return {status: r.status, text: text.slice(0, 300)}; }
+}
+"""
 
 URL = "https://www.dtek-dnem.com.ua/ua/shutdowns"
 STATE_FILE = "state.json"
@@ -42,6 +82,7 @@ S = 2  # масштаб картинки
 
 # ---------- данные с сайта ----------
 async def fetch_fact():
+    global ADDR_RESP
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
@@ -53,8 +94,44 @@ async def fetch_fact():
             print("DisconSchedule.fact не найден. Заголовок страницы:", await page.title())
             body = await page.inner_text("body")
             print("Начало страницы:", body[:500].replace("\n", " "))
+        elif CITY and STREET and HOUSE:
+            try:
+                ADDR_RESP = await page.evaluate(
+                    JS_LOOKUP,
+                    {"city": CITY, "street": STREET, "upd": str(fact.get("update", ""))},
+                )
+            except Exception as e:
+                print("Ошибка запроса по адресу:", e)
         await browser.close()
         return fact
+
+
+def setup_address():
+    """Очередь по адресу: сайт отдаёт sub_type_reason для каждого дома улицы."""
+    global ADDR_GROUP, ADDR_NOTE
+    if not (CITY and STREET and HOUSE):
+        return
+    resp = ADDR_RESP
+    if not resp:
+        ADDR_NOTE = "запрос по адресу не выполнен"
+        return
+    js = resp.get("json")
+    if not isinstance(js, dict) or not isinstance(js.get("data"), dict):
+        ADDR_NOTE = (f"неожиданный ответ сайта (код {resp.get('status')}): "
+                     f"{str(resp.get('text') or js)[:200]}")
+        return
+    data = js["data"]
+    key = next((k for k in data if str(k).strip().lower() == HOUSE.lower()), None)
+    if key is None:
+        ADDR_NOTE = f"дома {HOUSE} нет в ответе; дома в ответе: {list(data)[:25]}"
+        return
+    info = data[key]
+    reasons = info.get("sub_type_reason") if isinstance(info, dict) else None
+    if reasons:
+        ADDR_GROUP = str(reasons[0])
+        print("Очередь по адресу:", ADDR_GROUP)
+    else:
+        ADDR_NOTE = f"у дома {HOUSE} нет sub_type_reason: {str(info)[:200]}"
 
 
 def to_slots(hours):
@@ -68,7 +145,8 @@ def to_slots(hours):
 
 def find_group(groups):
     """Ключ очереди в данных дня: пробуем очереди по порядку (основная, потом запасные)."""
-    for want in GROUPS:
+    wants = ([ADDR_GROUP] if ADDR_GROUP else []) + GROUPS
+    for want in wants:
         if want in groups:
             return want
         num = want.replace("GPV", "").strip()
@@ -91,7 +169,7 @@ def get_days(fact):
         key = find_group(groups)
         if key is None:
             sample = next(iter(groups.values()), None) if groups else None
-            notes.append(f"{day}: очередей {GROUPS} нет; есть {list(groups)[:30]}; "
+            notes.append(f"{day}: очередей {([ADDR_GROUP] if ADDR_GROUP else []) + GROUPS} нет; есть {list(groups)[:30]}; "
                          f"пример данных: {str(sample)[:200]}")
             continue
         ACTIVE = key
@@ -198,7 +276,7 @@ def build_text(day, label, slots, kind):
     lines = [title]
     if ADDRESS:
         lines.append(ADDRESS)
-    lines.append(f"Дніпропетровська обл. · черга {ACTIVE.replace('GPV', '')}")
+    lines.append(f"Дніпропетровська обл. · черга {LABEL or ACTIVE.replace('GPV', '')}")
     lines.append("")
     if n == 0:
         lines.append("✅ Відключень не заплановано.")
@@ -341,6 +419,7 @@ async def main():
     fact = await fetch_fact()
     if not fact:
         sys.exit(1)
+    setup_address()
     try:
         days = get_days(fact)
     except Exception as e:
@@ -372,6 +451,8 @@ async def main():
             failed = True
 
     if wanted:
+        if CITY and STREET and HOUSE and not ADDR_GROUP:
+            send_message("⚠️ Чергу за адресою визначити не вдалося, використовую запасні черги.\n" + ADDR_NOTE)
         for day, slots in days:
             if str(day) in sent:
                 continue
