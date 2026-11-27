@@ -34,7 +34,7 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           ADDRESS: ${{ secrets.ADDRESS }}
-          GROUP: "GPV4.2"
+          GROUP: "GPV4.2,GPV8.1"
           FORCE: ${{ inputs.force }}
       - name: Save state
         run: |
