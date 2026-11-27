@@ -21,7 +21,11 @@ from playwright.async_api import async_playwright
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
-GROUP = os.environ.get("GROUP") or "GPV4.2"
+# Очереди по порядку: берётся первая, которая есть в данных сайта.
+# Можно задать в dtek.yml: GROUP: "GPV4.2,GPV8.1"
+GROUPS = [g.strip() for g in (os.environ.get("GROUP") or "GPV4.2,GPV8.1").split(",") if g.strip()]
+GROUP = GROUPS[0]
+ACTIVE = GROUP  # очередь, по которой реально найден график (заполняется в get_days)
 ADDRESS = os.environ.get("ADDRESS") or ""
 # FORCE=true: запуск по кнопке «Оновити» — прислать график, даже если он не менялся
 FORCE = os.environ.get("FORCE", "").lower() == "true"
@@ -63,19 +67,20 @@ def to_slots(hours):
 
 
 def find_group(groups):
-    """Ключ вашей очереди в данных дня (ищем и по номеру, на случай смены названия)."""
-    if GROUP in groups:
-        return GROUP
-    num = GROUP.replace("GPV", "").strip()
-    for k in groups:
-        if str(k).replace("GPV", "").strip() == num:
-            return k
+    """Ключ очереди в данных дня: пробуем очереди по порядку (основная, потом запасные)."""
+    for want in GROUPS:
+        if want in groups:
+            return want
+        num = want.replace("GPV", "").strip()
+        for k in groups:
+            if str(k).replace("GPV", "").strip() == num:
+                return k
     return None
 
 
 def get_days(fact):
     """[(дата, слоты)] на сегодня и завтра для вашей очереди."""
-    global DIAG
+    global DIAG, ACTIVE
     today = datetime.now(TZ).date()
     result = []
     notes = []
@@ -86,9 +91,10 @@ def get_days(fact):
         key = find_group(groups)
         if key is None:
             sample = next(iter(groups.values()), None) if groups else None
-            notes.append(f"{day}: очереди {GROUP} нет; есть {list(groups)[:30]}; "
+            notes.append(f"{day}: очередей {GROUPS} нет; есть {list(groups)[:30]}; "
                          f"пример данных: {str(sample)[:200]}")
             continue
+        ACTIVE = key
         result.append((day, to_slots(groups[key])))
     if not result:
         dates = [datetime.fromtimestamp(int(t), TZ).date().isoformat() for t in fact["data"]]
@@ -143,7 +149,7 @@ def build_outages(days):
 
 def save_outages(days):
     data = {
-        "group": GROUP,
+        "group": ACTIVE,
         "outages": [{"start": s.isoformat(), "end": e.isoformat()}
                     for s, e in build_outages(days)],
     }
@@ -192,7 +198,7 @@ def build_text(day, label, slots, kind):
     lines = [title]
     if ADDRESS:
         lines.append(ADDRESS)
-    lines.append(f"Дніпропетровська обл. · черга {GROUP.replace('GPV', '')}")
+    lines.append(f"Дніпропетровська обл. · черга {ACTIVE.replace('GPV', '')}")
     lines.append("")
     if n == 0:
         lines.append("✅ Відключень не заплановано.")
@@ -374,7 +380,7 @@ async def main():
             send_photo(render(day, label, slots, updated))
         if not days:
             overview = groups_overview(fact)
-            send_message(f"Черги {GROUP.replace('GPV', '')} у даних сайту немає.\n\n"
+            send_message(f"Черг {', '.join(g.replace('GPV', '') for g in GROUPS)} у даних сайту немає.\n\n"
                          "Коли немає світла сьогодні, за чергами:\n" + overview +
                          "\n\nЗнайдіть рядок, що збігається з графіком вашої адреси на сайті ДТЕК.")
 
