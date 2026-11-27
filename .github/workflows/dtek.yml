@@ -36,6 +36,9 @@ jobs:
           ADDRESS: ${{ secrets.ADDRESS }}
           GROUP: "GPV4.2,GPV8.1"
           FORCE: ${{ inputs.force }}
+          CITY: ${{ secrets.CITY }}
+          STREET: ${{ secrets.STREET }}
+          HOUSE: ${{ secrets.HOUSE }}
       - name: Save state
         run: |
           git config user.name "dtek-bot"
